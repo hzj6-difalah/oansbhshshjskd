@@ -1,5 +1,4 @@
 require('dotenv').config();
-
 const { Client, GatewayIntentBits, AttachmentBuilder, Events } = require('discord.js');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const ffmpeg = require('fluent-ffmpeg');
@@ -18,14 +17,12 @@ const client = new Client({
   ],
 });
 
-const PREFIX = process.env.PREFIX || '/';
-
 client.once(Events.ClientReady, (c) => {
   console.log(`✅ Logged in as ${c.user.tag}`);
-  client.user.setActivity('Evil Files', { type: 3 }); // Watching
+  client.user.setActivity('!حقوق | !say', { type: 3 }); // حالة البوت
 });
 
-// ===== رسم نص على صورة =====
+// ===== رسم على الصور =====
 async function overlayImage(inputPath, outputPath, text) {
   const img = await loadImage(inputPath);
   const canvas = createCanvas(img.width, img.height);
@@ -52,7 +49,7 @@ async function overlayImage(inputPath, outputPath, text) {
   fs.writeFileSync(outputPath, canvas.toBuffer('image/png'));
 }
 
-// ===== رسم نص على فيديو =====
+// ===== رسم على الفيديو =====
 function overlayVideo(inputPath, outputPath, text) {
   return new Promise((resolve, reject) => {
     const safeText = text.replace(/'/g, "\\'");
@@ -64,23 +61,40 @@ function overlayVideo(inputPath, outputPath, text) {
 
     ffmpeg(inputPath)
       .videoFilters(drawFilter)
-      .outputOptions(['-c:a copy'])
+      .outputOptions(['-c:a copy', '-y'])
       .on('end', () => resolve())
       .on('error', (err) => reject(err))
       .save(outputPath);
   });
 }
 
-// ===== معالجة المرفق =====
-async function handleAttachment(message, text) {
+// ===== معالجة الأمر =====
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  
+  // البريفكس !
+  if (!message.content.startsWith('!')) return;
+
+  const args = message.content.slice(1).trim().split(/ +/);
+  const command = args.shift()?.toLowerCase();
+
+  // نتحقق إذا كان الأمر say أو حقوق
+  if (command !== 'say' && command !== 'حقوق') return;
+
+  // نجيب أيدي الروم من الأمر (إذا كتبته)
+  const targetChannelId = args[0];
+  
+  // نجيب المرفق (صورة أو فيديو)
   let attachment = message.attachments.first();
+
+  // إذا ما فيه مرفق، نشوف إذا كان رد على رسالة فيها مرفق
   if (!attachment && message.reference) {
-    const replied = await message.channel.messages.fetch(message.reference.messageId);
-    attachment = replied?.attachments.first();
+    const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
+    attachment = repliedMsg?.attachments.first();
   }
 
   if (!attachment) {
-    return message.reply('❌ حط صورة أو فيديو مع الأمر، أو رد على مقطع');
+    return message.reply('❌ حط صورة أو فيديو مع الأمر، أو رد على مقطع بـ `!say`');
   }
 
   const isVideo = attachment.contentType?.startsWith('video');
@@ -90,62 +104,59 @@ async function handleAttachment(message, text) {
     return message.reply('❌ الملف لازم يكون صورة أو فيديو');
   }
 
+  // تجهيز الملفات المؤقتة
   const tmpDir = os.tmpdir();
   const ext = path.extname(attachment.name) || (isVideo ? '.mp4' : '.png');
   const inputPath = path.join(tmpDir, `input_${Date.now()}${ext}`);
   const outputPath = path.join(tmpDir, `output_${Date.now()}${isVideo ? '.mp4' : '.png'}`);
 
   try {
+    // تحميل الملف
     const res = await fetch(attachment.url);
     const buffer = Buffer.from(await res.arrayBuffer());
     fs.writeFileSync(inputPath, buffer);
 
+    // رسالة الانتظار
     const statusMsg = await message.reply('⏳ جاري المعالجة...');
 
+    // المعالجة
     if (isImage) {
-      await overlayImage(inputPath, outputPath, text);
+      await overlayImage(inputPath, outputPath, 'Evil Files');
     } else {
-      await overlayVideo(inputPath, outputPath, text);
+      await overlayVideo(inputPath, outputPath, 'Evil Files');
     }
 
     const file = new AttachmentBuilder(outputPath, {
       name: `EvilFiles_${attachment.name}`,
     });
 
-    await message.reply({ files: [file] });
-    await statusMsg.delete().catch(() => {});
+    // إذا حطيت أيدي روم، البوت يرسل هناك. إذا لا، يرسل في نفس الروم.
+    if (targetChannelId && /^\d+$/.test(targetChannelId)) {
+      try {
+        const targetChannel = await client.channels.fetch(targetChannelId);
+        await targetChannel.send({ files: [file] });
+        await statusMsg.edit('✅ تم الإرسال في الروم المطلوب!');
+      } catch (err) {
+        console.error(err);
+        await statusMsg.edit('❌ ما قدرت أرسل في الروم، تأكد من الأيدي أو الصلاحيات. سيتم الإرسال هنا بدلاً من ذلك.');
+        await message.channel.send({ files: [file] });
+      }
+    } else {
+      // إرسال في نفس الروم
+      await message.channel.send({ files: [file] });
+      await statusMsg.delete().catch(() => {});
+    }
 
+    // حذف الملفات المؤقتة
     fs.unlinkSync(inputPath);
     fs.unlinkSync(outputPath);
+
   } catch (err) {
     console.error(err);
     message.reply('❌ صار خطأ أثناء المعالجة').catch(() => {});
     if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
   }
-}
-
-// ===== الأوامر =====
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-  const command = args.shift()?.toLowerCase();
-
-  if (command === 'say') {
-    return handleAttachment(message, 'Evil Files');
-  }
-
-  if (command === 'حقوق') {
-    return handleAttachment(message, 'Evil Files');
-  }
 });
-
-// ===== تسجيل الدخول =====
-if (!process.env.DISCORD_TOKEN) {
-  console.error('❌ ما فيه توكن! حط DISCORD_TOKEN في ملف .env');
-  process.exit(1);
-}
 
 client.login(process.env.DISCORD_TOKEN);
