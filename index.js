@@ -14,7 +14,7 @@ const client = new Client({
 });
 
 // معرف القناة التي سيتم فيها التفاعل
-const TARGET_CHANNEL_ID = 'ضع_معرف_القناة_هنا'; // استبدل هذا بمعرف القناة
+const TARGET_CHANNEL_ID = '1575683930466558053'; 
 
 // متغيرات لتخزين الحالة الحالية
 let userToken = null;
