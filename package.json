@@ -1,7 +1,7 @@
 {
-  "name": "discord-bot-streaming",
+  "name": "discord-bot",
   "version": "1.0.0",
-  "description": "Bot that sets status to streaming and sends token via button",
+  "description": "Bot that sets status to streaming",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
