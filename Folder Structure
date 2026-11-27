@@ -1,0 +1,5 @@
+my-discord-bot/
+├── .gitignore
+├── README.md
+├── index.js
+└── package.json
